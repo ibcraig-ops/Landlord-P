@@ -385,7 +385,6 @@ def load_users():
             st.error("❌ App Connection Failed")
             st.stop()
 
-# HIGH-SPEED OPTIMIZATION: Query ONLY distinct owner string arrays to avoid loading whole dataframes into memory
 @st.cache_data(ttl=300)
 def get_unique_owners():
     try:
@@ -475,16 +474,19 @@ def clear_transaction_history():
         st.cache_data.clear()
         return True
 
-# HIGH-SPEED OPTIMIZATION: Implemented database-level filtering to avoid downloading unassigned records
+# FEATURE UPDATE: Adaptive SQL loading layer built to filter multiple owners simultaneously
 @st.cache_data(ttl=60)
-def load_master_data(sel_owner):
+def load_master_data(owner_scope):
     try:
-        if sel_owner == "All Owners":
+        if owner_scope == "All Owners":
             df = pd.read_sql("SELECT * FROM transactions", engine)
+        elif isinstance(owner_scope, list):
+            placeholders = ", ".join([f"'{x}'" for x in owner_scope])
+            df = pd.read_sql(f'SELECT * FROM transactions WHERE "Owner Detail" IN ({placeholders})', engine)
         else:
             query = text('SELECT * FROM transactions WHERE "Owner Detail" = :owner')
             with engine.connect() as conn:
-                df = pd.read_sql(query, conn, params={"owner": sel_owner})
+                df = pd.read_sql(query, conn, params={"owner": owner_scope})
                 
         if df.empty: return df
         
@@ -568,13 +570,22 @@ if not st.session_state['logged_in']:
                     'user_role': row.iloc[0]['role'], 
                     'assigned_owner': row.iloc[0]['owner_name'], 
                     'user_name': un,
-                    'sel_owner': row.iloc[0]['owner_name'] if row.iloc[0]['role'] == 'landlord' else "All Owners"
+                    'sel_owner': "All Owners" if row.iloc[0]['role'] == 'admin' or "All" in str(row.iloc[0]['owner_name']) else "All My Owners"
                 })
                 st.rerun()
             else: st.error("Access Denied: Invalid Credentials")
     st.stop()
 
 # --- 8. NAVIGATION & BASE SIDEBAR ---
+# FEATURE UPDATE: Establish database isolation footprints cleanly at loading initialization points
+if st.session_state['user_role'] == 'admin':
+    db_scope = "All Owners"
+else:
+    assigned_tokens = [x.strip() for x in st.session_state['assigned_owner'].split(',') if x.strip()]
+    db_scope = "All Owners" if "All" in assigned_tokens else assigned_tokens
+
+working_df = load_master_data(db_scope)
+
 with st.sidebar:
     st.success("✔️ Connected to Database")
     if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
@@ -602,26 +613,41 @@ with st.sidebar:
         st.session_state['current_page'] = "UserAdmin"
     
     st.divider()
-    if st.session_state['user_role'] == 'admin':
-        opts = ["All Owners"] + get_unique_owners()
-        st.session_state['sel_owner'] = st.selectbox("View Portfolio Scope:", opts)
+    if not working_df.empty:
+        unique_owners_in_data = sorted(working_df['Owner Detail'].unique().tolist())
+        if st.session_state['user_role'] == 'admin':
+            opts = ["All Owners"] + unique_owners_in_data
+            st.session_state['sel_owner'] = st.selectbox("View Portfolio Scope:", opts)
+        else:
+            assigned_tokens = [x.strip() for x in st.session_state['assigned_owner'].split(',') if x.strip()]
+            if "All" in assigned_tokens:
+                opts = ["All Owners"] + unique_owners_in_data
+                st.session_state['sel_owner'] = st.selectbox("View Portfolio Scope:", opts)
+            elif len(unique_owners_in_data) > 1:
+                opts = ["All My Owners"] + unique_owners_in_data
+                st.session_state['sel_owner'] = st.selectbox("Select Active Owner Scope:", opts)
+            else:
+                st.session_state['sel_owner'] = unique_owners_in_data[0]
 
-# --- 9. HIGH-SPEED OPTIMIZATION: LAZY DATASET FILTER ROUTING PORTS ---
+# --- 9. SIDEBAR FILTERS ---
 if st.session_state['current_page'] in ["Dashboard", "Analytics", "Reporting", "Management"]:
-    working_df = load_master_data(st.session_state['sel_owner'])
-    
     sb = []
     selected_months = []
     if not working_df.empty:
+        if st.session_state['sel_owner'] in ["All Owners", "All My Owners"]:
+            fdf_base = working_df
+        else:
+            fdf_base = working_df[working_df['Owner Detail'] == st.session_state['sel_owner']]
+            
         if st.session_state['current_page'] in ["Dashboard", "Analytics", "Reporting"]:
             with st.sidebar:
                 st.markdown("### 🔍 Live Dataset Filters")
-                sb = st.multiselect("Filter Asset Buildings", sorted(working_df['Building Detail'].unique()), default=sorted(working_df['Building Detail'].unique()))
-                chron_timeline = working_df.sort_values('Year_Month_Key')['Display_Month'].unique().tolist()
+                sb = st.multiselect("Filter Asset Buildings", sorted(fdf_base['Building Detail'].unique()), default=sorted(fdf_base['Building Detail'].unique()))
+                chron_timeline = fdf_base.sort_values('Year_Month_Key')['Display_Month'].unique().tolist()
                 selected_months = st.multiselect("Filter Months/Years", chron_timeline, default=chron_timeline)
                 st.divider()
                 if st.button("Logout", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
-        fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Display_Month'].isin(selected_months))]
+        fdf = fdf_base[(fdf_base['Building Detail'].isin(sb)) & (fdf_base['Display_Month'].isin(selected_months))]
 else:
     with st.sidebar:
         if st.button("Logout", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
@@ -696,7 +722,7 @@ if st.session_state['current_page'] == "Dashboard":
             st.divider()
             
             st.subheader("📋 Monthly Breakdown")
-            if st.session_state['sel_owner'] == "All Owners":
+            if st.session_state['sel_owner'] in ["All Owners", "All My Owners"]:
                 summary = fdf.groupby(['Year_Month_Key']).agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum', 'Meter Number': 'nunique', 'Unique Id': 'count'}).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Units': 'Consumption', 'Meter Number': 'Meters', 'Unique Id': 'Transactions'})
                 summary_flat = summary.reset_index()
                 total_row = pd.DataFrame([{'Year_Month_Key': 'Grand Total', 'Sales': summary_flat['Sales'].sum(), 'Consumption': summary_flat['Consumption'].sum(), 'Meters': int(fdf['Meter Number'].nunique()), 'Transactions': int(summary_flat['Transactions'].sum())}])
@@ -756,7 +782,7 @@ elif st.session_state['current_page'] == "Reporting":
             with rc1: local_months_selected = st.multiselect("Filter Active Report Months:", chron_timeline, default=selected_months if any(m in chron_timeline for m in selected_months) else chron_timeline)
             with rc2: consolidation_mode = st.selectbox("Meter Rows Grouping Structure:", ["Consolidate Total for Selected Period", "Split by Month Rows"])
                 
-            rpt_fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Display_Month'].isin(local_months_selected))]
+            rpt_fdf = fdf_base[(fdf_base['Building Detail'].isin(sb)) & (fdf_base['Display_Month'].isin(local_months_selected))]
             if rpt_fdf.empty: st.warning("No data rows locate within current selections.")
             else:
                 group_cols = []
@@ -765,7 +791,7 @@ elif st.session_state['current_page'] == "Reporting":
                     group_cols.extend(['Display_Month', 'Year_Month_Key'])
                     rename_dict['Display_Month'] = 'Period'
                 group_cols.append('Building Detail'); rename_dict['Building Detail'] = 'Building Location'
-                if st.session_state['sel_owner'] != "All Owners": group_cols.append('Meter Number'); rename_dict['Meter Number'] = 'Meter Number'
+                if st.session_state['sel_owner'] not in ["All Owners", "All My Owners"]: group_cols.append('Meter Number'); rename_dict['Meter Number'] = 'Meter Number'
                 group_cols.append('Service Resource'); rename_dict['Service Resource'] = 'Utility Type'
                 
                 rename_dict.update({'Sum Of Total Incl Vat': 'Gross Sales', 'Payment To Principle': 'Net To Principle', 'Total Service Fee Incl Vat': 'Service Fees', 'Vat': 'VAT', 'Units': 'Units Consumed', 'Unique Id': 'Transactions'})
@@ -799,7 +825,7 @@ elif st.session_state['current_page'] == "Reporting":
         with t2:
             st.markdown("### 🏢 Executive Building Summary Statement Factory")
             local_months_b = st.multiselect("Select Reporting Months (Building Summary Scope):", chron_timeline, default=selected_months if any(m in chron_timeline for m in selected_months) else chron_timeline, key="months_b")
-            b_fdf = working_df[(working_df['Building Detail'].isin(sb)) & (working_df['Display_Month'].isin(local_months_b))]
+            b_fdf = fdf_base[(fdf_base['Building Detail'].isin(sb)) & (fdf_base['Display_Month'].isin(local_months_b))]
             
             if b_fdf.empty: st.warning("No tracking details found matching specified criteria scopes.")
             else:
@@ -847,7 +873,7 @@ elif st.session_state['current_page'] == "Reporting":
                         
         with t3:
             st.markdown("### ⚠️ Dormant Meters Audit Suite")
-            dorm_base = working_df[working_df['Building Detail'].isin(sb)]
+            dorm_base = fdf_base[fdf_base['Building Detail'].isin(sb)]
             if dorm_base.empty: st.warning("No tracking records exist mapping back to this building context sequence.")
             else:
                 lookback_days = st.slider("Define Dormancy Threshold (Days of Continuous Inactivity):", min_value=15, max_value=120, value=60, step=5)
@@ -864,29 +890,42 @@ elif st.session_state['current_page'] == "Reporting":
                 else:
                     st.dataframe(dormant_display.style.format({'Last Successful Purchase': lambda x: x.strftime('%Y-%m-%d %H:%M') if not pd.isna(x) else ''}), use_container_width=True)
                     xl_buf_dorm = io.BytesIO()
-                    disabled_by_base = dormant_display.to_excel(xl_buf_dorm, index=False, sheet_name="Dormant Inactive Meters")
+                    dormant_display.to_excel(xl_buf_dorm, index=False, sheet_name="Dormant Inactive Meters")
                     st.download_button(label="📥 Export Dormant Meters Audit Sheet", data=xl_buf_dorm.getvalue(), file_name=f"Dormant_Meters_Audit_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
 
 elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
     u_df = load_users()
     
+    # FEATURE TARGET: Dynamic building owner leaderboard grid ranking density breakdown
+    st.markdown("### 📊 Portfolio Ownership Density Audit")
+    st.write("Below is the automated leaderboard auditing which building owners hold the most physical building assets inside the live database ledger:")
+    if not working_df.empty:
+        owner_density = working_df.groupby('Owner Detail')['Building Detail'].nunique().reset_index()
+        owner_density.columns = ['Building Owner/Corporation Entity', 'Total Unique Buildings Assigned']
+        owner_density = owner_density.sort_values(by='Total Unique Buildings Assigned', ascending=False).reset_index(drop=True)
+        st.dataframe(owner_density.style.set_properties(**{'font-weight': '600', 'color': '#0f172a'}), use_container_width=True)
+    else:
+        st.info("No active ownership data streams available to group.")
+        
+    st.divider()
     st.markdown("### 📋 Active System Access Accounts")
     display_users = u_df[['username', 'role', 'owner_name']].rename(columns={'username': 'System Username Identifier', 'role': 'Assigned Access Role', 'owner_name': 'Assigned Data Scope Allocation'})
     st.dataframe(display_users.style.set_properties(**{'font-weight': '600', 'color': '#1e293b'}), use_container_width=True)
     st.divider()
     
-    t1, t2, t3, t4 = st.tabs(["Add Landlord", "Reset Password", "Delete User", "📢 Broadcast Notice"])
+    t1, t2, t3, t4 = st.tabs(["Add Landlord Account", "Reset Password", "Delete User", "📢 Broadcast Notice"])
     with t1:
         with st.form("create_landlord", clear_on_submit=True):
             nu = st.text_input("New Landlord Username")
             np = st.text_input("Password", type="password")
-            # OPTIMIZATION: Swapped heavy dataframe scanning for fast direct caching unique collector
-            no = st.selectbox("Assign to Owner", ["All"] + get_unique_owners())
+            # FIXED ACCESS WORKFLOW: Changed single string select dropdown into dynamic multiselect tools
+            no_list = st.multiselect("Assign to Owner(s):", ["All"] + get_unique_owners(), help="Hold Shift or click multiple entities to bundle owner scopes under one credential set.")
             if st.form_submit_button("Create Account"):
-                if nu.strip() and np.strip():
-                    if save_user(nu.strip(), np.strip(), "landlord", no): st.toast(f"Account for '{nu}' created successfully!", icon="✔️"); st.rerun()
-                else: st.error("Form Input Validation Rejection: Username and password details cannot be empty.")
+                if nu.strip() and np.strip() and no_list:
+                    compiled_owner_string = ", ".join(no_list)
+                    if save_user(nu.strip(), np.strip(), "landlord", compiled_owner_string): st.toast(f"Account for '{nu}' created successfully!", icon="✔️"); st.rerun()
+                else: st.error("Form Validation Error: Username, password, and owner fields must all be filled.")
     with t2:
         ur = st.selectbox("Select Account", u_df['username'].tolist())
         npw = st.text_input("New Password", type="password")
