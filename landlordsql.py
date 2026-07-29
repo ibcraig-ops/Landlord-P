@@ -1,3 +1,4 @@
+import textwrap
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -881,7 +882,7 @@ if st.session_state['current_page'] == "Dashboard":
             </tr>
             '''
             
-            html_matrix = f'''
+            html_matrix = textwrap.dedent(f'''
             <table style="width:100%; border-collapse: collapse; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 25px;">
                 <thead>
                     <tr style="background-color: #1e3a8a; color: white; text-align: center;">
@@ -899,7 +900,7 @@ if st.session_state['current_page'] == "Dashboard":
                     {matrix_total_html}
                 </tbody>
             </table>
-            '''
+            ''').strip()
             st.markdown(html_matrix, unsafe_allow_html=True)
             st.divider()
             
