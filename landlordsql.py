@@ -864,15 +864,60 @@ if st.session_state['current_page'] == "Dashboard":
             st.divider()
             
             st.subheader("📈 Performance Trend")
-            if 'Service Resource' in fdf.columns:
-                trend_data = fdf.groupby(['Year_Month_Key', 'Service Resource'])['Sum Of Total Incl Vat'].sum().reset_index()
-                fig = px.bar(trend_data, x='Year_Month_Key', y='Sum Of Total Incl Vat', color='Service Resource', barmode='group', title="Gross Revenue Split: Electricity vs Water", labels={'Sum Of Total Incl Vat': 'Sales Revenue (R)', 'Year_Month_Key': 'Timeline Period', 'Service Resource': 'Utility Resource'}, color_discrete_map={'Electricity': '#0d9488', 'Water': '#2563eb'})
-            else:
-                trend_data = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
-                fig = px.bar(trend_data, x='Year_Month_Key', y='Sum Of Total Incl Vat', title="Gross Revenue Breakdown per Month")
-            st.plotly_chart(fig, use_container_width=True)
-            st.divider()
+            pt_tab1, pt_tab2 = st.tabs(["💰 Monthly Sales Revenue (R)", "📊 Monthly Consumption (kWh/Units)"])
             
+            with pt_tab1:
+                if 'Service Resource' in fdf.columns:
+                    trend_sales = fdf.groupby(['Year_Month_Key', 'Service Resource'])['Sum Of Total Incl Vat'].sum().reset_index()
+                    fig_sales = px.bar(trend_sales, x='Year_Month_Key', y='Sum Of Total Incl Vat', color='Service Resource', barmode='group', title="Gross Revenue Split: Electricity vs Water", labels={'Sum Of Total Incl Vat': 'Sales Revenue (R)', 'Year_Month_Key': 'Timeline Period', 'Service Resource': 'Utility Resource'}, color_discrete_map={'Electricity': '#0d9488', 'Water': '#2563eb'})
+                else:
+                    trend_sales = fdf.groupby('Year_Month_Key')['Sum Of Total Incl Vat'].sum().reset_index()
+                    fig_sales = px.bar(trend_sales, x='Year_Month_Key', y='Sum Of Total Incl Vat', title="Gross Revenue Breakdown per Month")
+                st.plotly_chart(fig_sales, use_container_width=True)
+
+            with pt_tab2:
+                if 'Service Resource' in fdf.columns:
+                    trend_units = fdf.groupby(['Year_Month_Key', 'Service Resource'])['Units'].sum().reset_index()
+                    fig_units = px.bar(trend_units, x='Year_Month_Key', y='Units', color='Service Resource', barmode='group', title="Monthly Billed Consumption Split: Electricity vs Water", labels={'Units': 'Consumption (kWh/Units)', 'Year_Month_Key': 'Timeline Period', 'Service Resource': 'Utility Resource'}, color_discrete_map={'Electricity': '#0d9488', 'Water': '#2563eb'})
+                else:
+                    trend_units = fdf.groupby('Year_Month_Key')['Units'].sum().reset_index()
+                    fig_units = px.bar(trend_units, x='Year_Month_Key', y='Units', title="Monthly Billed Consumption Breakdown (Units)")
+                st.plotly_chart(fig_units, use_container_width=True)
+            st.divider()
+
+            st.subheader("📟 Meter Hardware Model Performance & Distribution")
+            m_fdf = fdf.copy()
+            m_fdf['Meter Model'] = m_fdf['Meter Model'].fillna('Unspecified Model') if 'Meter Model' in m_fdf.columns else 'Unspecified Model'
+            
+            model_summary = m_fdf.groupby('Meter Model').agg(
+                Meters_Count=('Meter Number', 'nunique'),
+                Gross_Sales=('Sum Of Total Incl Vat', 'sum'),
+                Units_Consumed=('Units', 'sum'),
+                Transactions=('Unique Id', 'count')
+            ).reset_index().rename(columns={
+                'Meter Model': 'Meter Hardware Model',
+                'Meters_Count': 'Number of Meters',
+                'Gross_Sales': 'Sales Revenue (R)',
+                'Units_Consumed': 'Consumption (kWh/Units)',
+                'Transactions': 'Transactions Count'
+            })
+            
+            st.dataframe(model_summary.style.format({
+                'Number of Meters': '{:,}',
+                'Sales Revenue (R)': 'R {:,.2f}',
+                'Consumption (kWh/Units)': '{:,.2f}',
+                'Transactions Count': '{:,}'
+            }), use_container_width=True)
+            
+            mc1, mc2, mc3 = st.columns(3)
+            with mc1:
+                st.plotly_chart(px.bar(model_summary, x='Meter Hardware Model', y='Number of Meters', color='Meter Hardware Model', title="Number of Meters per Model", text_auto=True), use_container_width=True)
+            with mc2:
+                st.plotly_chart(px.bar(model_summary, x='Meter Hardware Model', y='Sales Revenue (R)', color='Meter Hardware Model', title="Gross Sales (R) per Meter Model", text_auto='R {:,.2f}'), use_container_width=True)
+            with mc3:
+                st.plotly_chart(px.bar(model_summary, x='Meter Hardware Model', y='Consumption (kWh/Units)', color='Meter Hardware Model', title="Consumption (Units) per Meter Model", text_auto='{:,.2f}'), use_container_width=True)
+            st.divider()
+
             st.subheader("📋 Monthly Breakdown")
             if st.session_state['sel_owner'] in ["All Owners", "All My Owners"]:
                 summary = fdf.groupby(['Year_Month_Key']).agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum', 'Meter Number': 'nunique', 'Unique Id': 'count'}).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Units': 'Consumption', 'Meter Number': 'Meters', 'Unique Id': 'Transactions'})
@@ -921,6 +966,39 @@ elif st.session_state['current_page'] == "Analytics":
             c3, c4 = st.columns(2)
             with c3: st.plotly_chart(px.line(fdf.groupby('Year_Month_Key')['Units'].sum().reset_index(), x='Year_Month_Key', y='Units', markers=True, title="Consumption Volatility Trend (Units)"), use_container_width=True)
             with c4: st.plotly_chart(px.bar(fdf.groupby('Building Detail')['Sum Of Total Incl Vat'].sum().reset_index().sort_values('Sum Of Total Incl Vat', ascending=False).head(15), y='Building Detail', x='Sum Of Total Incl Vat', orientation='h', title="Top 15 Buildings by Billings Gross"), use_container_width=True)
+            st.divider()
+            
+            st.subheader("📟 Meter Hardware Model Deep-Dive Analytics")
+            m_fdf_analytics = fdf.copy()
+            m_fdf_analytics['Meter Model'] = m_fdf_analytics['Meter Model'].fillna('Unspecified Model') if 'Meter Model' in m_fdf_analytics.columns else 'Unspecified Model'
+            
+            model_summary_analytics = m_fdf_analytics.groupby('Meter Model').agg(
+                Meters_Count=('Meter Number', 'nunique'),
+                Gross_Sales=('Sum Of Total Incl Vat', 'sum'),
+                Units_Consumed=('Units', 'sum'),
+                Transactions=('Unique Id', 'count')
+            ).reset_index().rename(columns={
+                'Meter Model': 'Meter Hardware Model',
+                'Meters_Count': 'Number of Meters',
+                'Gross_Sales': 'Sales Revenue (R)',
+                'Units_Consumed': 'Consumption (kWh/Units)',
+                'Transactions': 'Transactions Count'
+            })
+            
+            st.dataframe(model_summary_analytics.style.format({
+                'Number of Meters': '{:,}',
+                'Sales Revenue (R)': 'R {:,.2f}',
+                'Consumption (kWh/Units)': '{:,.2f}',
+                'Transactions Count': '{:,}'
+            }), use_container_width=True)
+            
+            ac1, ac2, ac3 = st.columns(3)
+            with ac1:
+                st.plotly_chart(px.pie(model_summary_analytics, names='Meter Hardware Model', values='Number of Meters', title="Number of Meters per Model", hole=0.4), use_container_width=True)
+            with ac2:
+                st.plotly_chart(px.bar(model_summary_analytics, x='Meter Hardware Model', y='Sales Revenue (R)', color='Meter Hardware Model', title="Gross Sales (R) per Meter Model"), use_container_width=True)
+            with ac3:
+                st.plotly_chart(px.bar(model_summary_analytics, x='Meter Hardware Model', y='Consumption (kWh/Units)', color='Meter Hardware Model', title="Consumption (kWh) per Meter Model"), use_container_width=True)
 
 elif st.session_state['current_page'] == "Reporting":
     if working_df.empty: st.info("Please sync asset profiles to access report generation frameworks.")
