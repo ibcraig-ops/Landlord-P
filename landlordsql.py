@@ -43,7 +43,58 @@ try:
                 notice_text TEXT NOT NULL,
                 target_landlord VARCHAR(255) NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
+            );
+            CREATE TABLE IF NOT EXISTS transactions (
+                "Unique Id" TEXT,
+                "Unique Ref" TEXT,
+                "Client" TEXT,
+                "Trans_date" TIMESTAMP,
+                "Owner Detail" TEXT,
+                "Building Detail" TEXT,
+                "Service Resource" TEXT,
+                "Meter Number" TEXT,
+                "Customer Surname" TEXT,
+                "Usage Point Name" TEXT,
+                "Pricing Structure" TEXT,
+                "Terminal" TEXT,
+                "Paytype" TEXT,
+                "Sum Of Total Incl Vat" NUMERIC,
+                "Payment To Principle" NUMERIC,
+                "Resource / Deposit Amount" NUMERIC,
+                "Total Service Fee Incl Vat" NUMERIC,
+                "Vending Fee & Channel Fee" NUMERIC,
+                "Vending Fee" NUMERIC,
+                "Channel Fee" NUMERIC,
+                "Cyclic Fee Collected" NUMERIC,
+                "Debt Excl Vat" NUMERIC,
+                "Sum Of Pay Type Discount Incl Vat" NUMERIC,
+                "Vat" NUMERIC,
+                "Units" NUMERIC
+            );
+            CREATE TABLE IF NOT EXISTS billed_consumption (
+                id SERIAL PRIMARY KEY,
+                "Building" TEXT,
+                "Agreement Ref" TEXT,
+                "Surname" TEXT,
+                "Resource Name" TEXT,
+                "Meter_num" TEXT,
+                "Month" TEXT,
+                "Display_Month" TEXT,
+                "Consumption" NUMERIC,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS register_readings (
+                id SERIAL PRIMARY KEY,
+                "Last_reading_date_created" TIMESTAMP,
+                "Last_billing_date" TIMESTAMP,
+                "Owner_details" TEXT,
+                "Building_details" TEXT,
+                "Meter_num" TEXT,
+                "Usage Point Name" TEXT,
+                "Surname" TEXT,
+                "Meter Model" TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """))
 
 except Exception as e:
@@ -90,7 +141,7 @@ def gen_p(df, title):
         pdf.ln()
     return bytes(pdf.output())
 
-# --- 5. EXECUTIVE EXECUTIVE PDF REPORT TEMPLATE ---
+# --- 5. EXECUTIVE PDF REPORT TEMPLATE ---
 def gen_executive_sales_report_pdf(summary_df, total_metrics, period_label, portfolio_label, logo_path="logo.png"):
     if not FPDF:
         return None
@@ -465,87 +516,186 @@ def purge_all_notifications():
 
 def clear_transaction_history():
     try:
-        query = text("TRUNCATE TABLE transactions")
         with engine.begin() as conn:
-            conn.execute(query)
+            conn.execute(text("TRUNCATE TABLE transactions; TRUNCATE TABLE billed_consumption; TRUNCATE TABLE register_readings;"))
         st.cache_data.clear()
         return True
     except Exception:
         st.cache_data.clear()
         return True
 
-# FEATURE UPDATE: Adaptive SQL loading layer built to filter multiple owners simultaneously
+# --- RECONCILED MULTI-SOURCE MASTER DATA ENGINE ---
 @st.cache_data(ttl=60)
 def load_master_data(owner_scope):
     try:
+        # 1. Fetch Transactions
         if owner_scope == "All Owners":
-            df = pd.read_sql("SELECT * FROM transactions", engine)
+            df_tx = pd.read_sql("SELECT * FROM transactions", engine)
         elif isinstance(owner_scope, list):
             placeholders = ", ".join([f"'{x}'" for x in owner_scope])
-            df = pd.read_sql(f'SELECT * FROM transactions WHERE "Owner Detail" IN ({placeholders})', engine)
+            df_tx = pd.read_sql(f'SELECT * FROM transactions WHERE "Owner Detail" IN ({placeholders})', engine)
         else:
             query = text('SELECT * FROM transactions WHERE "Owner Detail" = :owner')
             with engine.connect() as conn:
-                df = pd.read_sql(query, conn, params={"owner": owner_scope})
+                df_tx = pd.read_sql(query, conn, params={"owner": owner_scope})
                 
-        if df.empty: return df
-        
-        if 'Meter Number' in df.columns:
-            df['Meter Number'] = df['Meter Number'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-            
-        df['Units'] = pd.to_numeric(df['Units'], errors='coerce').fillna(0)
-        df['Sum Of Total Incl Vat'] = pd.to_numeric(df['Sum Of Total Incl Vat'], errors='coerce').fillna(0)
-        df['Payment To Principle'] = pd.to_numeric(df['Payment To Principle'], errors='coerce').fillna(0)
-        df['Total Service Fee Incl Vat'] = pd.to_numeric(df['Total Service Fee Incl Vat'], errors='coerce').fillna(0)
-        df['Vat'] = pd.to_numeric(df['Vat'], errors='coerce').fillna(0)
-        
-        df['Trans_date'] = pd.to_datetime(df['Trans_date'], errors='coerce')
-        
-        df['Owner Detail'] = df['Owner Detail'].fillna("Missing Owner").astype(str).str.strip()
-        df['Building Detail'] = df['Building Detail'].fillna("Missing Building").astype(str).str.strip()
-        
-        df['Year_Month_Key'] = df['Trans_date'].dt.strftime('%Y-%m').fillna("Unknown Period")
-        df['Month'] = df['Trans_date'].dt.strftime('%B').fillna("Unknown Month")
-        df['Display_Month'] = df['Month'] + " " + df['Trans_date'].dt.year.astype(str).fillna("")
-        df['Meter_Search'] = df['Meter Number']
-        return df
-    except: return pd.DataFrame()
+        if df_tx.empty:
+            return pd.DataFrame()
 
+        # Clean Transaction numeric fields
+        currency_cols = ['Sum Of Total Incl Vat', 'Payment To Principle', 'Resource / Deposit Amount', 
+                         'Total Service Fee Incl Vat', 'Vending Fee & Channel Fee', 'Vending Fee', 
+                         'Channel Fee', 'Cyclic Fee Collected', 'Debt Excl Vat', 'Sum Of Pay Type Discount Incl Vat', 'Vat']
+        for col in currency_cols:
+            if col in df_tx.columns:
+                df_tx[col] = pd.to_numeric(df_tx[col].astype(str).str.replace('R', '', regex=False).str.replace(',', '', regex=False).str.strip(), errors='coerce').fillna(0)
+
+        df_tx['Units'] = pd.to_numeric(df_tx['Units'].astype(str).str.replace(',', '', regex=False).str.strip(), errors='coerce').fillna(0)
+        df_tx['Meter Number'] = df_tx['Meter Number'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+        df_tx['Trans_date'] = pd.to_datetime(df_tx['Trans_date'], errors='coerce')
+        df_tx['Owner Detail'] = df_tx['Owner Detail'].fillna("Missing Owner").astype(str).str.strip()
+        df_tx['Building Detail'] = df_tx['Building Detail'].fillna("Missing Building").astype(str).str.strip()
+        df_tx['Year_Month_Key'] = df_tx['Trans_date'].dt.strftime('%Y-%m').fillna("Unknown Period")
+        df_tx['Month_Name'] = df_tx['Trans_date'].dt.strftime('%B').fillna("Unknown Month")
+        df_tx['Year'] = df_tx['Trans_date'].dt.year.fillna(0).astype(int).astype(str)
+        df_tx['Display_Month'] = df_tx['Month_Name'] + " " + df_tx['Year']
+
+        # 2. Check & Fetch Billed Consumption to reconcile Thin Prepayment 0-Units
+        try:
+            df_billed = pd.read_sql("SELECT * FROM billed_consumption", engine)
+        except:
+            df_billed = pd.DataFrame()
+
+        if df_tx['Units'].sum() == 0 and not df_billed.empty:
+            df_billed['Meter_num'] = df_billed['Meter_num'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+            df_billed['Consumption'] = pd.to_numeric(df_billed['Consumption'].astype(str).str.replace(',', '', regex=False).str.strip(), errors='coerce').fillna(0)
+            
+            billed_grouped = df_billed.groupby(['Meter_num', 'Display_Month'])['Consumption'].sum().reset_index()
+            tx_counts = df_tx.groupby(['Meter Number', 'Display_Month']).size().reset_index(name='tx_count_in_m')
+            
+            df_tx = df_tx.merge(tx_counts, on=['Meter Number', 'Display_Month'], how='left')
+            df_tx = df_tx.merge(billed_grouped, left_on=['Meter Number', 'Display_Month'], right_on=['Meter_num', 'Display_Month'], how='left')
+            
+            df_tx['Consumption'] = df_tx['Consumption'].fillna(0)
+            df_tx['tx_count_in_m'] = df_tx['tx_count_in_m'].fillna(1)
+            df_tx['Units'] = df_tx['Consumption'] / df_tx['tx_count_in_m']
+            df_tx = df_tx.drop(columns=['Meter_num', 'Consumption', 'tx_count_in_m'], errors='ignore')
+
+        # 3. Fetch & Merge Register Readings Metadata
+        try:
+            df_reg = pd.read_sql("SELECT * FROM register_readings", engine)
+        except:
+            df_reg = pd.DataFrame()
+
+        if not df_reg.empty:
+            df_reg['Meter_num'] = df_reg['Meter_num'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+            reg_meta = df_reg[['Meter_num', 'Meter Model', 'Last_reading_date_created', 'Last_billing_date']].drop_duplicates(subset=['Meter_num'])
+            df_tx = df_tx.merge(reg_meta, left_on='Meter Number', right_on='Meter_num', how='left').drop(columns=['Meter_num'], errors='ignore')
+
+        df_tx['Meter_Search'] = df_tx['Meter Number']
+        return df_tx
+    except Exception as e:
+        return pd.DataFrame()
+
+# AUTO-DETECT MULTI-FILE TYPE DATA SYNC ENGINE
 def update_database(f, m):
     try:
-        df = pd.read_csv(f)
+        df_raw = pd.read_csv(f, low_memory=False)
+        cols_lower = [str(c).strip().lower() for c in df_raw.columns]
         
-        col_map = {
-            "unique id": "Unique Id", "unique_id": "Unique Id",
-            "trans_date": "Trans_date", "trans date": "Trans_date", "transaction date": "Trans_date",
-            "owner detail": "Owner Detail", "owner": "Owner Detail",
-            "building detail": "Building Detail", "building location": "Building Detail", "building": "Building Detail",
-            "meter number": "Meter Number", "meter no": "Meter Number",
-            "service resource": "Service Resource", "utility type": "Service Resource", "utility": "Service Resource",
-            "sum of total incl vat": "Sum Of Total Incl Vat", "gross sales": "Sum Of Total Incl Vat", "gross": "Sum Of Total Incl Vat",
-            "payment to principle": "Payment To Principle", "net to principle": "Payment To Principle",
-            "total service fee incl vat": "Total Service Fee Incl Vat", "service fees": "Total Service Fee Incl Vat",
-            "vat": "Vat", "units": "Units", "client": "Client", "customer surname": "Customer Surname"
-        }
-        
-        df.columns = df.columns.str.strip().str.lower()
-        df = df.rename(columns=col_map)
-        
-        if 'Unique Id' in df.columns:
-            df = df.dropna(subset=['Unique Id'])
-            df['Unique Id'] = df['Unique Id'].apply(norm_id)
+        # 1. Transaction Report
+        if any(k in cols_lower for k in ['unique id', 'sum of total incl vat', 'payment to principle', 'paytype']):
+            col_map = {
+                "unique id": "Unique Id", "unique_id": "Unique Id",
+                "trans_date": "Trans_date", "trans date": "Trans_date", "transaction date": "Trans_date",
+                "owner detail": "Owner Detail", "owner": "Owner Detail",
+                "building detail": "Building Detail", "building location": "Building Detail", "building": "Building Detail",
+                "meter number": "Meter Number", "meter no": "Meter Number",
+                "service resource": "Service Resource", "utility type": "Service Resource", "utility": "Service Resource",
+                "sum of total incl vat": "Sum Of Total Incl Vat", "gross sales": "Sum Of Total Incl Vat", "gross": "Sum Of Total Incl Vat",
+                "payment to principle": "Payment To Principle", "net to principle": "Payment To Principle",
+                "total service fee incl vat": "Total Service Fee Incl Vat", "service fees": "Total Service Fee Incl Vat",
+                "vat": "Vat", "units": "Units", "client": "Client", "customer surname": "Customer Surname"
+            }
+            df_raw.columns = df_raw.columns.str.strip().str.lower()
+            df = df_raw.rename(columns=col_map)
             
+            if 'Unique Id' in df.columns:
+                df = df.dropna(subset=['Unique Id'])
+                df['Unique Id'] = df['Unique Id'].apply(norm_id)
+                
+            table_name = "transactions"
+            msg_label = "Transaction Report"
+
+        # 2. Billed Consumption Report
+        elif 'consumption' in cols_lower and any(k in cols_lower for k in ['month', 'agreement ref']):
+            col_map = {
+                "building": "Building", "agreement ref": "Agreement Ref", "surname": "Surname",
+                "resource name": "Resource Name", "utility": "Resource Name",
+                "meter_num": "Meter_num", "meter number": "Meter_num", "meter no": "Meter_num",
+                "month": "Month", "consumption": "Consumption"
+            }
+            df_raw.columns = df_raw.columns.str.strip().str.lower()
+            df = df_raw.rename(columns=col_map)
+            
+            if 'Consumption' in df.columns:
+                df['Consumption'] = df['Consumption'].astype(str).str.replace('R', '', regex=False).str.replace(',', '', regex=False).str.strip()
+                df['Consumption'] = pd.to_numeric(df['Consumption'], errors='coerce').fillna(0)
+                
+            if 'Meter_num' in df.columns:
+                df['Meter_num'] = df['Meter_num'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+                
+            if 'Month' in df.columns:
+                def parse_m(val):
+                    s = str(val).strip()
+                    parts = s.split('-')
+                    if len(parts) == 2:
+                        return f"{parts[1]} {parts[0]}"
+                    return s
+                df['Display_Month'] = df['Month'].apply(parse_m)
+                
+            table_name = "billed_consumption"
+            msg_label = "Billed Consumption Report"
+
+        # 3. Register Readings Report
+        elif any(k in cols_lower for k in ['last_reading_date_created', 'last_billing_date', 'meter model']):
+            col_map = {
+                "last_reading_date_created": "Last_reading_date_created",
+                "last_billing_date": "Last_billing_date",
+                "owner_details": "Owner_details", "owner detail": "Owner_details",
+                "building_details": "Building_details", "building detail": "Building_details",
+                "meter_num": "Meter_num", "meter number": "Meter_num", "meter no": "Meter_num",
+                "usage point name": "Usage Point Name", "surname": "Surname", "meter model": "Meter Model"
+            }
+            df_raw.columns = df_raw.columns.str.strip().str.lower()
+            df = df_raw.rename(columns=col_map)
+            
+            if 'Meter_num' in df.columns:
+                df['Meter_num'] = df['Meter_num'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+                
+            if 'Last_reading_date_created' in df.columns:
+                df['Last_reading_date_created'] = pd.to_datetime(df['Last_reading_date_created'], errors='coerce')
+            if 'Last_billing_date' in df.columns:
+                df['Last_billing_date'] = pd.to_datetime(df['Last_billing_date'], errors='coerce')
+                
+            table_name = "register_readings"
+            msg_label = "Register Readings Report"
+
+        else:
+            st.sidebar.error("❌ Unrecognized file structure. Upload a Transaction, Billed Consumption, or Register Readings CSV.")
+            return
+
         if df.empty:
             st.sidebar.warning("⚠️ Uploaded file template contains zero rows.")
             return
 
         with engine.begin() as conn:
             if m == "replace":
-                df.to_sql("transactions", conn, if_exists="replace", index=False)
-                st.sidebar.success(f"🚀 Overwrote data suite with {len(df)} rows.")
+                df.to_sql(table_name, conn, if_exists="replace", index=False)
+                st.sidebar.success(f"🚀 Overwrote {msg_label} with {len(df)} rows.")
             else:
-                df.to_sql("transactions", conn, if_exists="append", index=False)
-                st.sidebar.success(f"🚀 Appended {len(df)} lines successfully!")
+                df.to_sql(table_name, conn, if_exists="append", index=False)
+                st.sidebar.success(f"🚀 Appended {len(df)} rows to {msg_label} successfully!")
                 
         st.cache_data.clear()
     except Exception as data_sync_exception:
@@ -577,7 +727,6 @@ if not st.session_state['logged_in']:
     st.stop()
 
 # --- 8. NAVIGATION & BASE SIDEBAR ---
-# FEATURE UPDATE: Establish database isolation footprints cleanly at loading initialization points
 if st.session_state['user_role'] == 'admin':
     db_scope = "All Owners"
 else:
@@ -593,13 +742,16 @@ with st.sidebar:
     
     if st.session_state['user_role'] == 'admin':
         with st.expander("📂 Data Sync"):
-            up = st.file_uploader("Upload CSV", type="csv")
+            uploaded_files = st.file_uploader("Upload CSV File(s)", type="csv", accept_multiple_files=True)
             md = "replace" if st.radio("Mode", ["Overwrite", "Append"]) == "Overwrite" else "append"
-            if up and st.button("Sync Now"): update_database(up, md); st.rerun()
+            if uploaded_files and st.button("Sync Now"):
+                for up_f in uploaded_files:
+                    update_database(up_f, md)
+                st.rerun()
             
             st.divider()
             st.markdown("<span style='color:#ef4444; font-weight:700; font-size:12px;'>⚠️ DANGER ZONE</span>", unsafe_allow_html=True)
-            if st.button("🗑️ Wipe All Transaction Logs", use_container_width=True):
+            if st.button("🗑️ Wipe All Transaction & Report Logs", use_container_width=True):
                 if clear_transaction_history():
                     st.toast("Database tables successfully wiped clean!", icon="🧼")
                     st.rerun()
@@ -897,7 +1049,6 @@ elif st.session_state['current_page'] == "UserAdmin":
     st.title("👥 User Administration")
     u_df = load_users()
     
-    # FEATURE TARGET: Dynamic building owner leaderboard grid ranking density breakdown
     st.markdown("### 📊 Portfolio Ownership Density Audit")
     st.write("Below is the automated leaderboard auditing which building owners hold the most physical building assets inside the live database ledger:")
     if not working_df.empty:
@@ -919,7 +1070,6 @@ elif st.session_state['current_page'] == "UserAdmin":
         with st.form("create_landlord", clear_on_submit=True):
             nu = st.text_input("New Landlord Username")
             np = st.text_input("Password", type="password")
-            # FIXED ACCESS WORKFLOW: Changed single string select dropdown into dynamic multiselect tools
             no_list = st.multiselect("Assign to Owner(s):", ["All"] + get_unique_owners(), help="Hold Shift or click multiple entities to bundle owner scopes under one credential set.")
             if st.form_submit_button("Create Account"):
                 if nu.strip() and np.strip() and no_list:
@@ -971,8 +1121,23 @@ elif st.session_state['current_page'] == "Management":
             
         if filtered_meters_df.empty: st.warning("No meters match criteria.")
         else:
-            dir_df = filtered_meters_df.groupby('Meter Number').agg({'Building Detail': 'first', 'Client': 'first', 'Customer Surname': 'first', 'Sum Of Total Incl Vat': 'sum', 'Units': 'sum', 'Trans_date': 'count'}).rename(columns={'Sum Of Total Incl Vat': 'Billings', 'Units': 'Consumption', 'Trans_date': 'Count'}).reset_index()
-            st.dataframe(dir_df.style.format({'Billings': 'R {:,.2f}', 'Consumption': '{:,.2f}'}), use_container_width=True)
+            agg_dict = {
+                'Building Detail': 'first',
+                'Client': 'first',
+                'Customer Surname': 'first',
+                'Sum Of Total Incl Vat': 'sum',
+                'Units': 'sum',
+                'Trans_date': 'count'
+            }
+            if 'Meter Model' in filtered_meters_df.columns:
+                agg_dict['Meter Model'] = 'first'
+            if 'Last_billing_date' in filtered_meters_df.columns:
+                agg_dict['Last_billing_date'] = 'max'
+
+            dir_df = filtered_meters_df.groupby('Meter Number').agg(agg_dict).reset_index()
+            dir_df = dir_df.rename(columns={'Sum Of Total Incl Vat': 'Billings (R)', 'Units': 'Consumption (kWh)', 'Trans_date': 'Tx Count'})
+            
+            st.dataframe(dir_df.style.format({'Billings (R)': 'R {:,.2f}', 'Consumption (kWh)': '{:,.2f}'}), use_container_width=True)
             st.divider()
             
             selected_meter = st.selectbox("Drill Down Target Meter Logs:", sorted(dir_df['Meter Number'].unique().tolist()))
