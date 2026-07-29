@@ -826,40 +826,80 @@ if st.session_state['current_page'] == "Dashboard":
         else:
             st.title(f"🏢 {st.session_state['sel_owner']} Overview")
             
-            elec_sub = fdf[fdf['Service Resource'].str.lower() == 'electricity'] if 'Service Resource' in fdf.columns else pd.DataFrame()
-            water_sub = fdf[fdf['Service Resource'].str.lower() == 'water'] if 'Service Resource' in fdf.columns else pd.DataFrame()
-            
-            e_sales, e_units = elec_sub['Sum Of Total Incl Vat'].sum(), elec_sub['Units'].sum()
-            w_sales, w_units = water_sub['Sum Of Total Incl Vat'].sum(), water_sub['Units'].sum()
-            t_sales, t_units = e_sales + w_sales, e_units + w_units
-            
             st.write("#### 📊 Period Performance Summary Matrix")
-            html_matrix = f"""
+            
+            fdf_valid_matrix = fdf[fdf['Year_Month_Key'] != "Unknown Period"].copy()
+            if fdf_valid_matrix.empty:
+                fdf_valid_matrix = fdf.copy()
+                
+            months_seq = fdf_valid_matrix.sort_values('Year_Month_Key')['Display_Month'].unique()
+            
+            matrix_rows_html = ""
+            tot_e_sales, tot_e_units = 0.0, 0.0
+            tot_w_sales, tot_w_units = 0.0, 0.0
+            tot_t_sales, tot_t_units = 0.0, 0.0
+            
+            for m_key in months_seq:
+                m_sub = fdf_valid_matrix[fdf_valid_matrix['Display_Month'] == m_key]
+                
+                e_sub = m_sub[m_sub['Service Resource'].str.lower() == 'electricity'] if 'Service Resource' in m_sub.columns else pd.DataFrame()
+                w_sub = m_sub[m_sub['Service Resource'].str.lower() == 'water'] if 'Service Resource' in m_sub.columns else pd.DataFrame()
+                
+                m_e_s = e_sub['Sum Of Total Incl Vat'].sum() if not e_sub.empty else 0.0
+                m_e_u = e_sub['Units'].sum() if not e_sub.empty else 0.0
+                m_w_s = w_sub['Sum Of Total Incl Vat'].sum() if not w_sub.empty else 0.0
+                m_w_u = w_sub['Units'].sum() if not w_sub.empty else 0.0
+                
+                m_t_s = m_e_s + m_w_s
+                m_t_u = m_e_u + m_w_u
+                
+                tot_e_sales += m_e_s; tot_e_units += m_e_u
+                tot_w_sales += m_w_s; tot_w_units += m_w_u
+                tot_t_sales += m_t_s; tot_t_units += m_t_u
+                
+                matrix_rows_html += f'''
+                <tr style="background-color: #ffffff; border-bottom: 1px solid #e2e8f0; text-align: center;">
+                    <td style="padding: 12px 16px; font-weight: 700; color: #1e293b; text-align: left; background-color: #f8fafc;">📅 {m_key}</td>
+                    <td style="padding: 12px 16px; font-weight: 600; color: #0d9488;">R {m_e_s:,.2f}</td>
+                    <td style="padding: 12px 16px; font-weight: 600; color: #2563eb;">{m_e_u:,.2f} Units</td>
+                    <td style="padding: 12px 16px; font-weight: 600; color: #0d9488;">R {m_w_s:,.2f}</td>
+                    <td style="padding: 12px 16px; font-weight: 600; color: #2563eb;">{m_w_u:,.2f} Units</td>
+                    <td style="padding: 12px 16px; font-weight: 700; color: #0f172a; background-color: #f1f5f9;">R {m_t_s:,.2f}</td>
+                    <td style="padding: 12px 16px; font-weight: 700; color: #334155; background-color: #f1f5f9;">{m_t_u:,.2f} Units</td>
+                </tr>
+                '''
+                
+            matrix_total_html = f'''
+            <tr style="background-color: #1e3a8a; color: white; text-align: center; font-weight: 700; border-top: 2px solid #0f172a;">
+                <td style="padding: 14px 16px; text-align: left; font-size: 14px;">🏆 GRAND TOTAL</td>
+                <td style="padding: 14px 16px; font-size: 14px; color: #5eead4;">R {tot_e_sales:,.2f}</td>
+                <td style="padding: 14px 16px; font-size: 14px; color: #93c5fd;">{tot_e_units:,.2f} Units</td>
+                <td style="padding: 14px 16px; font-size: 14px; color: #5eead4;">R {tot_w_sales:,.2f}</td>
+                <td style="padding: 14px 16px; font-size: 14px; color: #93c5fd;">{tot_w_units:,.2f} Units</td>
+                <td style="padding: 14px 16px; font-size: 15px; color: #ffffff; background-color: #1e40af;">R {tot_t_sales:,.2f}</td>
+                <td style="padding: 14px 16px; font-size: 15px; color: #ffffff; background-color: #1e40af;">{tot_t_units:,.2f} Units</td>
+            </tr>
+            '''
+            
+            html_matrix = f'''
             <table style="width:100%; border-collapse: collapse; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 25px;">
                 <thead>
-                    <tr style="background-color: #1e3a8a; color: white; text-align: left;">
-                        <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; letter-spacing: 0.5px;">Metric Summary Matrix</th>
-                        <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; text-align: center; letter-spacing: 0.5px; border-left: 1px solid rgba(255,255,255,0.15);">⚡ Electricity</th>
-                        <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; text-align: center; letter-spacing: 0.5px; border-left: 1px solid rgba(255,255,255,0.15);">💧 Water</th>
-                        <th style="padding: 14px 18px; font-size: 14px; font-weight: 600; text-align: center; letter-spacing: 0.5px; border-left: 1px solid rgba(255,255,255,0.15);">🏢 Total Scope</th>
+                    <tr style="background-color: #1e3a8a; color: white; text-align: center;">
+                        <th style="padding: 14px 16px; font-size: 13px; font-weight: 600; text-align: left;">Timeline Period</th>
+                        <th style="padding: 14px 16px; font-size: 13px; font-weight: 600; border-left: 1px solid rgba(255,255,255,0.15);">⚡ Electricity Sales</th>
+                        <th style="padding: 14px 16px; font-size: 13px; font-weight: 600; border-left: 1px solid rgba(255,255,255,0.15);">⚡ Electricity Units</th>
+                        <th style="padding: 14px 16px; font-size: 13px; font-weight: 600; border-left: 1px solid rgba(255,255,255,0.15);">💧 Water Sales</th>
+                        <th style="padding: 14px 16px; font-size: 13px; font-weight: 600; border-left: 1px solid rgba(255,255,255,0.15);">💧 Water Units</th>
+                        <th style="padding: 14px 16px; font-size: 13px; font-weight: 600; border-left: 1px solid rgba(255,255,255,0.15); background-color: #1e40af;">🏢 Total Sales</th>
+                        <th style="padding: 14px 16px; font-size: 13px; font-weight: 600; border-left: 1px solid rgba(255,255,255,0.15); background-color: #1e40af;">🏢 Total Consumption</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <tr style="background-color: #ffffff; border-bottom: 1px solid #e2e8f0;">
-                        <td style="padding: 16px 18px; font-weight: 700; color: #334155; background-color: #f8fafc; font-size: 13px; width: 20%;">💰 Sales</td>
-                        <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0d9488; background-color: #f0fdfa; width: 26%;">R {e_sales:,.2f}</td>
-                        <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0d9488; background-color: #f0fdfa; width: 26%;">R {w_sales:,.2f}</td>
-                        <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #0f172a; background-color: #f1f5f9; width: 28%;">R {t_sales:,.2f}</td>
-                    </tr>
-                    <tr style="background-color: #ffffff;">
-                        <td style="padding: 16px 18px; font-weight: 700; color: #334155; background-color: #f8fafc; font-size: 13px;">📊 Consumption</td>
-                        <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #2563eb; background-color: #eff6ff;">{e_units:,.2f} Units</td>
-                        <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #2563eb; background-color: #eff6ff;">{w_units:,.2f} Units</td>
-                        <td style="padding: 16px 18px; text-align: center; font-size: 16px; font-weight: 700; color: #475569; background-color: #f1f5f9;">{t_units:,.2f} Units</td>
-                    </tr>
+                    {matrix_rows_html}
+                    {matrix_total_html}
                 </tbody>
             </table>
-            """
+            '''
             st.markdown(html_matrix, unsafe_allow_html=True)
             st.divider()
             
