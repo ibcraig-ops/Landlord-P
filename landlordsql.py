@@ -960,7 +960,7 @@ if st.session_state['current_page'] == "Dashboard":
             with mc3:
                 st.plotly_chart(px.bar(model_summary, x='Meter Hardware Model', y='Consumption (kWh/Units)', color='Meter Hardware Model', title="Consumption (Units) per Meter Model", text_auto='{:,.2f}'), use_container_width=True)
             st.divider()
-
+            
             st.subheader("📋 Monthly Breakdown")
             if st.session_state['sel_owner'] in ["All Owners", "All My Owners"]:
                 summary = fdf.groupby(['Year_Month_Key']).agg({'Sum Of Total Incl Vat': 'sum', 'Units': 'sum', 'Meter Number': 'nunique', 'Unique Id': 'count'}).rename(columns={'Sum Of Total Incl Vat': 'Sales', 'Units': 'Consumption', 'Meter Number': 'Meters', 'Unique Id': 'Transactions'})
@@ -991,10 +991,31 @@ if st.session_state['current_page'] == "Dashboard":
             st.subheader("🏆 Top 10 Highest Transactions")
             st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
             st.divider()
+            
             st.subheader("🔎 Fast Ledger Text Search")
-            q = st.text_input("Filter dashboard results by keyword...")
-            res = fdf if not q else fdf[fdf.astype(str).apply(lambda x: x.str.contains(q, case=False)).any(axis=1)]
-            st.dataframe(res, use_container_width=True)
+            q = st.text_input("Filter dashboard results by keyword...", placeholder="Type unit, meter, tenant surname, or transaction ID...")
+
+            if q.strip():
+                search_cols = [c for c in ['Meter Number', 'Customer Surname', 'Building Detail', 'Owner Detail', 'Client', 'Paytype', 'Unique Id'] if c in fdf.columns]
+                mask = pd.Series(False, index=fdf.index)
+                for col in search_cols:
+                    mask |= fdf[col].astype(str).str.contains(q.strip(), case=False, na=False)
+                res = fdf[mask]
+                st.caption(f"Found **{len(res):,}** matching transaction records.")
+            else:
+                res = fdf
+
+            display_cols = [c for c in ['Trans_date', 'Owner Detail', 'Building Detail', 'Meter Number', 'Customer Surname', 'Service Resource', 'Sum Of Total Incl Vat', 'Units', 'Paytype', 'Unique Id'] if c in res.columns]
+            
+            st.dataframe(
+                res[display_cols].head(250).style.format({
+                    'Sum Of Total Incl Vat': 'R {:,.2f}',
+                    'Units': '{:,.2f}'
+                }),
+                use_container_width=True
+            )
+            if len(res) > 250:
+                st.info(f"💡 Displaying first 250 of **{len(res):,}** matching records. Type a specific keyword above to narrow down results.")
 
 elif st.session_state['current_page'] == "Analytics":
     if working_df.empty: st.warning("No tracking records available to compute visuals.")
