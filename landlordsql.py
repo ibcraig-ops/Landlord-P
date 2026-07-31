@@ -945,12 +945,17 @@ if st.session_state['current_page'] == "Dashboard":
                 'Transactions': 'Transactions Count'
             })
             
-            st.dataframe(model_summary.style.format({
-                'Number of Meters': '{:,}',
-                'Sales Revenue (R)': 'R {:,.2f}',
-                'Consumption (kWh/Units)': '{:,.2f}',
-                'Transactions Count': '{:,}'
-            }), use_container_width=True)
+            st.dataframe(
+                model_summary,
+                column_config={
+                    "Number of Meters": st.column_config.NumberColumn("Number of Meters", format="%d"),
+                    "Sales Revenue (R)": st.column_config.NumberColumn("Sales Revenue (R)", format="R %,.2f"),
+                    "Consumption (kWh/Units)": st.column_config.NumberColumn("Consumption (kWh/Units)", format="%,.2f"),
+                    "Transactions Count": st.column_config.NumberColumn("Transactions Count", format="%d")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
             
             mc1, mc2, mc3 = st.columns(3)
             with mc1:
@@ -972,7 +977,17 @@ if st.session_state['current_page'] == "Dashboard":
                 total_row = pd.DataFrame([{'Year_Month_Key': 'Grand Total', 'Building Detail': '', 'Sales': summary_flat['Sales'].sum(), 'Consumption': summary_flat['Consumption'].sum(), 'Meters': int(fdf['Meter Number'].nunique()), 'Transactions': int(summary_flat['Transactions'].sum())}])
             
             summary_with_total = pd.concat([summary_flat, total_row], ignore_index=True)
-            st.dataframe(summary_with_total.style.format({'Sales': 'R {:,.2f}', 'Consumption': '{:,.2f}', 'Meters': '{:,}', 'Transactions': '{:,}'}), use_container_width=True)
+            st.dataframe(
+                summary_with_total,
+                column_config={
+                    "Sales": st.column_config.NumberColumn("Sales", format="R %,.2f"),
+                    "Consumption": st.column_config.NumberColumn("Consumption", format="%,.2f"),
+                    "Meters": st.column_config.NumberColumn("Meters", format="%d"),
+                    "Transactions": st.column_config.NumberColumn("Transactions", format="%d")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
             
             c1, c2 = st.columns(2)
             with c1:
@@ -1008,11 +1023,14 @@ if st.session_state['current_page'] == "Dashboard":
             display_cols = [c for c in ['Trans_date', 'Owner Detail', 'Building Detail', 'Meter Number', 'Customer Surname', 'Service Resource', 'Sum Of Total Incl Vat', 'Units', 'Paytype', 'Unique Id'] if c in res.columns]
             
             st.dataframe(
-                res[display_cols].head(250).style.format({
-                    'Sum Of Total Incl Vat': 'R {:,.2f}',
-                    'Units': '{:,.2f}'
-                }),
-                use_container_width=True
+                res[display_cols].head(250),
+                column_config={
+                    "Sum Of Total Incl Vat": st.column_config.NumberColumn("Sum Of Total Incl Vat", format="R %,.2f"),
+                    "Units": st.column_config.NumberColumn("Units", format="%,.2f"),
+                    "Trans_date": st.column_config.DatetimeColumn("Trans_date", format="YYYY-MM-DD HH:mm")
+                },
+                use_container_width=True,
+                hide_index=True
             )
             if len(res) > 250:
                 st.info(f"💡 Displaying first 250 of **{len(res):,}** matching records. Type a specific keyword above to narrow down results.")
@@ -1049,12 +1067,17 @@ elif st.session_state['current_page'] == "Analytics":
                 'Transactions': 'Transactions Count'
             })
             
-            st.dataframe(model_summary_analytics.style.format({
-                'Number of Meters': '{:,}',
-                'Sales Revenue (R)': 'R {:,.2f}',
-                'Consumption (kWh/Units)': '{:,.2f}',
-                'Transactions Count': '{:,}'
-            }), use_container_width=True)
+            st.dataframe(
+                model_summary_analytics,
+                column_config={
+                    "Number of Meters": st.column_config.NumberColumn("Number of Meters", format="%d"),
+                    "Sales Revenue (R)": st.column_config.NumberColumn("Sales Revenue (R)", format="R %,.2f"),
+                    "Consumption (kWh/Units)": st.column_config.NumberColumn("Consumption (kWh/Units)", format="%,.2f"),
+                    "Transactions Count": st.column_config.NumberColumn("Transactions Count", format="%d")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
             
             ac1, ac2, ac3 = st.columns(3)
             with ac1:
@@ -1102,7 +1125,18 @@ elif st.session_state['current_page'] == "Reporting":
                 m4.metric("Aggregated Activity Load", f"{totals['units']:,.2f} Units", f"{totals['tx_count']} Tx")
                 
                 st.write("#### 📑 Sales Report Data Grid Preview")
-                st.dataframe(rpt_display.drop(columns=['Year_Month_Key'], errors='ignore').style.format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:,.2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}'}), use_container_width=True)
+                st.dataframe(
+                    rpt_display.drop(columns=['Year_Month_Key'], errors='ignore'),
+                    column_config={
+                        "Gross Sales": st.column_config.NumberColumn("Gross Sales", format="R %,.2f"),
+                        "Net To Principle": st.column_config.NumberColumn("Net To Principle", format="R %,.2f"),
+                        "Service Fees": st.column_config.NumberColumn("Service Fees", format="R %,.2f"),
+                        "VAT": st.column_config.NumberColumn("VAT", format="R %,.2f"),
+                        "Units Consumed": st.column_config.NumberColumn("Units Consumed", format="%,.2f")
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
                 
                 st.markdown("#### 📥 Document Compilation & Export Options")
                 exp_col1, exp_col2 = st.columns(2)
@@ -1144,14 +1178,20 @@ elif st.session_state['current_page'] == "Reporting":
                 bm3.metric("Portfolio Fees Revenue", f"R {totals_b['fees']:,.2f}")
                 bm4.metric("Portfolio Combined Load", f"{totals_b['units']:,.2f} Units", f"{totals_b['tx_count']} Tx")
                 
-                def highlight_subtotals(row):
-                    val = str(row['Building Location'])
-                    if "SUBTOTAL" in val: return ['background-color: #f1f5f9; font-weight: bold; color: #1e3a8a'] * len(row)
-                    elif "GRAND PORTFOLIO" in val: return ['background-color: #e2e8f0; font-weight: bold; color: #0f172a; border-top: 2px solid #94a3b8'] * len(row)
-                    return [''] * len(row)
-                    
                 st.write("#### 📊 Building Summary Statement Preview")
-                st.dataframe(b_display_df.style.apply(highlight_subtotals, axis=1).format({'Gross Sales': 'R {:,.2f}', 'Net To Principle': 'R {:,.2f}', 'Service Fees': 'R {:,.2f}', 'VAT': 'R {:,.2f}', 'Units Consumed': '{:,.2f}', 'Transactions': '{:,}'}), use_container_width=True)
+                st.dataframe(
+                    b_display_df,
+                    column_config={
+                        "Gross Sales": st.column_config.NumberColumn("Gross Sales", format="R %,.2f"),
+                        "Net To Principle": st.column_config.NumberColumn("Net To Principle", format="R %,.2f"),
+                        "Service Fees": st.column_config.NumberColumn("Service Fees", format="R %,.2f"),
+                        "VAT": st.column_config.NumberColumn("VAT", format="R %,.2f"),
+                        "Units Consumed": st.column_config.NumberColumn("Units Consumed", format="%,.2f"),
+                        "Transactions": st.column_config.NumberColumn("Transactions", format="%d")
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
                 
                 st.markdown("#### 📥 Document Compilation & Export Options")
                 b_exp_col1, b_exp_col2 = st.columns(2)
@@ -1182,7 +1222,14 @@ elif st.session_state['current_page'] == "Reporting":
                 st.write(f"#### 📋 Dormancy Directory Summary ({len(dormant_display)} Meters Flagged)")
                 if dormant_display.empty: st.success(f"🎉 Complete structural activity verified! Zero meters exceed the {lookback_days}-day lookup constraints.")
                 else:
-                    st.dataframe(dormant_display.style.format({'Last Successful Purchase': lambda x: x.strftime('%Y-%m-%d %H:%M') if not pd.isna(x) else ''}), use_container_width=True)
+                    st.dataframe(
+                        dormant_display,
+                        column_config={
+                            "Last Successful Purchase": st.column_config.DatetimeColumn("Last Successful Purchase", format="YYYY-MM-DD HH:mm")
+                        },
+                        use_container_width=True,
+                        hide_index=True
+                    )
                     xl_buf_dorm = io.BytesIO()
                     dormant_display.to_excel(xl_buf_dorm, index=False, sheet_name="Dormant Inactive Meters")
                     st.download_button(label="📥 Export Dormant Meters Audit Sheet", data=xl_buf_dorm.getvalue(), file_name=f"Dormant_Meters_Audit_{datetime.now().strftime('%Y%m%d')}.xlsx", use_container_width=True)
@@ -1197,14 +1244,14 @@ elif st.session_state['current_page'] == "UserAdmin":
         owner_density = working_df.groupby('Owner Detail')['Building Detail'].nunique().reset_index()
         owner_density.columns = ['Building Owner/Corporation Entity', 'Total Unique Buildings Assigned']
         owner_density = owner_density.sort_values(by='Total Unique Buildings Assigned', ascending=False).reset_index(drop=True)
-        st.dataframe(owner_density.style.set_properties(**{'font-weight': '600', 'color': '#0f172a'}), use_container_width=True)
+        st.dataframe(owner_density, use_container_width=True, hide_index=True)
     else:
         st.info("No active ownership data streams available to group.")
         
     st.divider()
     st.markdown("### 📋 Active System Access Accounts")
     display_users = u_df[['username', 'role', 'owner_name']].rename(columns={'username': 'System Username Identifier', 'role': 'Assigned Access Role', 'owner_name': 'Assigned Data Scope Allocation'})
-    st.dataframe(display_users.style.set_properties(**{'font-weight': '600', 'color': '#1e293b'}), use_container_width=True)
+    st.dataframe(display_users, use_container_width=True, hide_index=True)
     st.divider()
     
     t1, t2, t3, t4 = st.tabs(["Add Landlord Account", "Reset Password", "Delete User", "📢 Broadcast Notice"])
@@ -1279,7 +1326,20 @@ elif st.session_state['current_page'] == "Management":
             dir_df = filtered_meters_df.groupby('Meter Number').agg(agg_dict).reset_index()
             dir_df = dir_df.rename(columns={'Sum Of Total Incl Vat': 'Billings (R)', 'Units': 'Consumption (kWh)', 'Trans_date': 'Tx Count'})
             
-            st.dataframe(dir_df.style.format({'Billings (R)': 'R {:,.2f}', 'Consumption (kWh)': '{:,.2f}'}), use_container_width=True)
+            dir_df['Billings (R)'] = pd.to_numeric(dir_df['Billings (R)'], errors='coerce').fillna(0)
+            dir_df['Consumption (kWh)'] = pd.to_numeric(dir_df['Consumption (kWh)'], errors='coerce').fillna(0)
+
+            st.dataframe(
+                dir_df,
+                column_config={
+                    "Billings (R)": st.column_config.NumberColumn("Billings (R)", format="R %,.2f"),
+                    "Consumption (kWh)": st.column_config.NumberColumn("Consumption (kWh)", format="%,.2f"),
+                    "Tx Count": st.column_config.NumberColumn("Tx Count", format="%d"),
+                    "Last_billing_date": st.column_config.DatetimeColumn("Last Billing Date", format="YYYY-MM-DD HH:mm")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
             st.divider()
             
             selected_meter = st.selectbox("Drill Down Target Meter Logs:", sorted(dir_df['Meter Number'].unique().tolist()))
