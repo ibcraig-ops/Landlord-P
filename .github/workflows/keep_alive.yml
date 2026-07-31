@@ -1,0 +1,21 @@
+name: Keep Streamlit App Awake
+
+on:
+  schedule:
+    # Runs every day at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Allows manual triggering from GitHub
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Make empty commit
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git commit --allow-empty -m "Chore: Keep-alive commit to prevent Streamlit sleep"
+          git push
