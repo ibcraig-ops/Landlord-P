@@ -1320,14 +1320,18 @@ elif st.session_state['current_page'] == "Management":
             }
             if 'Meter Model' in filtered_meters_df.columns:
                 agg_dict['Meter Model'] = 'first'
+            if 'Last_reading_date_created' in filtered_meters_df.columns:
+                agg_dict['Last_reading_date_created'] = 'max'
             if 'Last_billing_date' in filtered_meters_df.columns:
                 agg_dict['Last_billing_date'] = 'max'
 
             dir_df = filtered_meters_df.groupby('Meter Number').agg(agg_dict).reset_index()
             dir_df = dir_df.rename(columns={'Sum Of Total Incl Vat': 'Billings (R)', 'Units': 'Consumption (kWh)', 'Trans_date': 'Tx Count'})
             
-            dir_df['Billings (R)'] = pd.to_numeric(dir_df['Billings (R)'], errors='coerce').fillna(0)
-            dir_df['Consumption (kWh)'] = pd.to_numeric(dir_df['Consumption (kWh)'], errors='coerce').fillna(0)
+            # Reorder columns logically if present
+            preferred_cols = ['Meter Number', 'Building Detail', 'Client', 'Customer Surname', 'Last_reading_date_created', 'Last_billing_date', 'Billings (R)', 'Consumption (kWh)', 'Tx Count', 'Meter Model']
+            ordered_cols = [c for c in preferred_cols if c in dir_df.columns] + [c for c in dir_df.columns if c not in preferred_cols]
+            dir_df = dir_df[ordered_cols]
 
             st.dataframe(
                 dir_df,
@@ -1335,6 +1339,7 @@ elif st.session_state['current_page'] == "Management":
                     "Billings (R)": st.column_config.NumberColumn("Billings (R)", format="R %,.2f"),
                     "Consumption (kWh)": st.column_config.NumberColumn("Consumption (kWh)", format="%,.2f"),
                     "Tx Count": st.column_config.NumberColumn("Tx Count", format="%d"),
+                    "Last_reading_date_created": st.column_config.DatetimeColumn("Last Reading Date", format="YYYY-MM-DD HH:mm"),
                     "Last_billing_date": st.column_config.DatetimeColumn("Last Billing Date", format="YYYY-MM-DD HH:mm")
                 },
                 use_container_width=True,
