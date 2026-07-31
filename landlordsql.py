@@ -22,20 +22,24 @@ if 'logged_in' not in st.session_state:
 
 # --- 2. DATABASE CONFIGURATION ---
 try:
-    def scrub(key):
-        return str(st.secrets[key]).strip().replace('"', '').replace("'", "").replace(" ", "")
+    @st.cache_resource
+    def get_db_engine():
+        def scrub(key):
+            return str(st.secrets[key]).strip().replace('"', '').replace("'", "").replace(" ", "")
 
-    RAW_ID = scrub("DB_USER")
-    P = scrub("DB_PASS")
-    H = scrub("DB_HOST")
-    PORT = scrub("DB_PORT")
-    DB = scrub("DB_NAME")
-    
-    clean_id = RAW_ID.replace("postgres.", "").replace("postgres", "")
-    U = f"postgres.{clean_id}"
-    
-    clean_url = f"postgresql://{U}:{P}@{H}:{PORT}/{DB}?sslmode=require"
-    engine = create_engine(clean_url, pool_pre_ping=True)
+        RAW_ID = scrub("DB_USER")
+        P = scrub("DB_PASS")
+        H = scrub("DB_HOST")
+        PORT = scrub("DB_PORT")
+        DB = scrub("DB_NAME")
+        
+        clean_id = RAW_ID.replace("postgres.", "").replace("postgres", "")
+        U = f"postgres.{clean_id}"
+        
+        clean_url = f"postgresql://{U}:{P}@{H}:{PORT}/{DB}?sslmode=require"
+        return create_engine(clean_url, pool_pre_ping=True, pool_size=10, max_overflow=20)
+
+    engine = get_db_engine()
 
     with engine.begin() as init_conn:
         init_conn.execute(text("""
@@ -506,9 +510,8 @@ def load_active_notifications(target_landlord):
 
 def purge_all_notifications():
     try:
-        query = text("TRUNCATE TABLE notifications")
         with engine.begin() as conn:
-            conn.execute(query)
+            conn.execute(text("TRUNCATE TABLE notifications"))
         return True
     except Exception as database_error:
         st.error("🚨 Database Engine Rejected Notice Clear Sequence")
@@ -526,7 +529,7 @@ def clear_transaction_history():
         return True
 
 # --- RECONCILED MULTI-SOURCE MASTER DATA ENGINE ---
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=600)
 def load_master_data(owner_scope):
     try:
         # 1. Fetch Transactions
@@ -563,7 +566,7 @@ def load_master_data(owner_scope):
 
         # 2. Check & Fetch Billed Consumption to reconcile Thin Prepayment 0-Units
         try:
-            df_billed = pd.read_sql("SELECT * FROM billed_consumption", engine)
+            df_billed = pd.read_sql('SELECT "Meter_num", "Display_Month", "Consumption" FROM billed_consumption', engine)
         except:
             df_billed = pd.DataFrame()
 
@@ -584,7 +587,7 @@ def load_master_data(owner_scope):
 
         # 3. Fetch & Merge Register Readings Metadata
         try:
-            df_reg = pd.read_sql("SELECT * FROM register_readings", engine)
+            df_reg = pd.read_sql('SELECT "Meter_num", "Meter Model", "Last_reading_date_created", "Last_billing_date" FROM register_readings', engine)
         except:
             df_reg = pd.DataFrame()
 
@@ -1006,7 +1009,6 @@ if st.session_state['current_page'] == "Dashboard":
             st.subheader("🏆 Top 10 Highest Transactions")
             st.dataframe(fdf.sort_values('Sum Of Total Incl Vat', ascending=False).head(10)[['Trans_date', 'Customer Surname', 'Sum Of Total Incl Vat', 'Meter Number']], use_container_width=True)
             st.divider()
-            
             st.subheader("🔎 Fast Ledger Text Search")
             q = st.text_input("Filter dashboard results by keyword...", placeholder="Type unit, meter, tenant surname, or transaction ID...")
 
@@ -1178,6 +1180,12 @@ elif st.session_state['current_page'] == "Reporting":
                 bm3.metric("Portfolio Fees Revenue", f"R {totals_b['fees']:,.2f}")
                 bm4.metric("Portfolio Combined Load", f"{totals_b['units']:,.2f} Units", f"{totals_b['tx_count']} Tx")
                 
+                def highlight_subtotals(row):
+                    val = str(row['Building Location'])
+                    if "SUBTOTAL" in val: return ['background-color: #f1f5f9; font-weight: bold; color: #1e3a8a'] * len(row)
+                    elif "GRAND PORTFOLIO" in val: return ['background-color: #e2e8f0; font-weight: bold; color: #0f172a; border-top: 2px solid #94a3b8'] * len(row)
+                    return [''] * len(row)
+                    
                 st.write("#### 📊 Building Summary Statement Preview")
                 st.dataframe(
                     b_display_df,
